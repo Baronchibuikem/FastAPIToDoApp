@@ -1,21 +1,22 @@
-from turtle import up
-from urllib import response
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from model import Todo
+import os
 
+import aioredis
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from loguru import logger
+from motor.motor_asyncio import AsyncIOMotorClient
+from starlette.responses import RedirectResponse
+
+from config import settings
+from openapi import initialise_openapi
+from routers import router
 
 # app object
 app = FastAPI()
 
-from database import (
-    fetch_all_todos, 
-    fetch_one_todo, 
-    create_todo, 
-    update_todo, 
-    remove_todo)
 
-origins = ['hhtp://localhost:3000']
+origins = ['http://localhost:3000']
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,45 +26,60 @@ app.add_middleware(
     allow_headers=['*']
 )
 
-@app.get('/')
-def read_root():
-    return {"Ping": "Pong"}
-
-
-@app.get('/api/todo')
-async def get_todo():
-    response = await fetch_all_todos()
-    return response
-
-
-@app.get('/api/todo/{title}', response_model=Todo)
-async def get_todo_by_id(title: str):
-    response = await fetch_one_todo(title)
-    if response:
-        return response
-    raise HTTPException(404, f"there is no TODO item with this title - {title}")
-
-
-@app.post('/api/todo', response_model=Todo)
-async def post_todo(todo:Todo):
-    response = await create_todo(todo.dict())
-    if response:
-        return response
-    raise HTTPException(400, "something went wrong/ Bad request")
-
-
-@app.put('/api/todo/{title}', response_model=Todo)
-async def update_todo(title:str, description:str):
-    response = await update_todo(title, description)
-    if response:
-        return response
-    raise HTTPException(400, "something went wrong/ Bad request")
-
-
-@app.delete('/api/todo/{title}')
-async def delete_todo(title:str):
-    response = await remove_todo(title)
-    if response:
-        return "Successfully deleted todo items"
-    raise HTTPException(400, "something went wrong/ Bad request")
+@app.on_event('startup')
+async def startup_event():
+    try:
+        app.mongodb_client = AsyncIOMotorClient(settings.MONGODB_URL)
+        app.mongodb = app.mongodb_client[settings.MONGODB_NAME]
+    except Exception as e:
+        logger.error(f"Failed to connect with MongoDB: {e}.")
+    else:
+        logger.info('Connect to MongoDB ✅')
+        
+    try:
+        redis = await aioredis.from_url(settings.REDIS_DB)
+        app.redis = redis
+    except Exception as e:
+        logger.error(f"Failed to connect with Redis: {e}.")
+    else:
+        logger.info('Connect to Redis ✅')
     
+    
+@app.on_event("shutdown")
+async def shutdown_db_client():
+  logger.info('OdeServer Shutdown 💤')
+
+  try:
+    app.mongodb_client.close()
+  except Exception as e:
+    logger.error(f"Failed to close connection w/ MongoDB: {e}.")
+  else:
+    logger.info('Close connection w/ MongoDB 💤')
+
+
+@app.get('/', include_in_schema=False)
+async def get_root():
+  if (root_url := os.environ.get('ROOT_URL')) is None:
+    return {
+      'api_docs': {
+        'openapi': f'{root_url}/docs',
+        'redoc': f'{root_url}/redoc'
+      }
+    }
+    
+  response = RedirectResponse(url=f"{root_url}/docs")
+  return response
+
+app.include_router(router, tags=["Todo"], prefix="/api/v1/task")
+
+
+initialise_openapi(app)
+
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "main:app",
+        host=settings.HOST,
+        reload=settings.DEBUG_MODE,
+        port=settings.PORT,
+    )
