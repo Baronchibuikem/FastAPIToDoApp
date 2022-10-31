@@ -3,9 +3,7 @@ from model import TaskBase, TaskCreate, TaskUpdate
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 
-
 router = APIRouter()
-
 
 
 @router.get('/', response_description="List all Tasks")

@@ -3,7 +3,6 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 import uuid
 
-
 class TaskBase(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id", description="Will be automatically generated.")
     title: str
